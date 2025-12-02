@@ -3,7 +3,7 @@
 NPM3Guard v2.3 - Enhanced Enterprise Vulnerability Scanner with Enhanced Slack Alerts
 ===================================================================================
 An advanced NPM package vulnerability scanner for VAPT teams with comprehensive Slack reporting
-Author: Enhanced by AI for better enterprise security scanning
+Author: Apnisec
 Version: 2.3.0 - Enhanced Slack alerts with detailed vulnerability reporting
 """
 
