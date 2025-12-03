@@ -1453,8 +1453,8 @@ class GitHubHandler(GitPlatformHandler):
     
     def _scan_dependency_file(self, content: str, file_type: str, vuln_db: VulnerabilityDatabase) -> List[Dict]:
         """Scan dependency file content for vulnerabilities"""
-        vulnerabilities = []
-        
+        vulnerabilities: List[Dict] = []
+
         try:
             if file_type in ["package.json", "package-lock.json"]:
                 vulnerabilities = self._scan_json_dependencies(content, vuln_db)
@@ -1464,42 +1464,71 @@ class GitHubHandler(GitPlatformHandler):
                 vulnerabilities = self._scan_pnpm_lock(content, vuln_db)
         except Exception as e:
             logging.error(f"Error scanning {file_type}: {e}")
-        
+
         return vulnerabilities
-    
+
     def _scan_json_dependencies(self, content: str, vuln_db: VulnerabilityDatabase) -> List[Dict]:
-        """Scan JSON dependency files"""
-        vulnerabilities = []
-        
+        """Scan package.json and package-lock.json (v1 & v2) dependency files safely."""
+        vulnerabilities: List[Dict] = []
+
         try:
             data = json.loads(content)
-            dependencies = {}
-            dependencies.update(data.get("dependencies", {}))
-            dependencies.update(data.get("devDependencies", {}))
-            dependencies.update(data.get("peerDependencies", {}))
-            dependencies.update(data.get("optionalDependencies", {}))
-            
-            for package_name, version in dependencies.items():
-                # Clean version string
-                clean_version = re.sub(r'^[\^~>=<\s]*', '', version)
-                
-                # Check for vulnerabilities
+            dependencies: Dict[str, object] = {}
+
+            # ---- 1) Normal package.json fields ----
+            for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+                deps = data.get(key)
+                if isinstance(deps, dict):
+                    dependencies.update(deps)
+
+            # ---- 2) package-lock.json v1 ----
+            lock_deps = data.get("dependencies")
+            if isinstance(lock_deps, dict):
+                for pkg, info in lock_deps.items():
+                    if pkg not in dependencies:
+                        dependencies[pkg] = info
+
+            # ---- 3) package-lock.json v2 ----
+            lock_pkgs = data.get("packages")
+            if isinstance(lock_pkgs, dict):
+                for path, info in lock_pkgs.items():
+                    if isinstance(info, dict):
+                        name = info.get("name")
+                        if name and name not in dependencies:
+                            dependencies[name] = info
+
+            # ---- 4) Normalize versions & check vuln DB ----
+            for package_name, version_info in dependencies.items():
+                # version_info can be string or dict
+                if isinstance(version_info, dict):
+                    version_raw = version_info.get("version") or ""
+                else:
+                    version_raw = str(version_info)
+
+                if not version_raw:
+                    continue
+
+                clean_version = re.sub(r'^[\^~>=<\s]*', '', version_raw)
+
                 package_vulns = vuln_db.is_vulnerable(package_name, clean_version)
                 for vuln in package_vulns:
                     vulnerabilities.append({
-                        'package': package_name,
-                        'version': version,
-                        'clean_version': clean_version,
-                        'severity': vuln['severity'],
-                        'cve_id': vuln.get('cve_id'),
-                        'description': vuln.get('description'),
-                        'vulnerable_range': vuln['range']
+                        "package": package_name,
+                        "version": version_raw,
+                        "clean_version": clean_version,
+                        "severity": vuln["severity"],
+                        "cve_id": vuln.get("cve_id"),
+                        "description": vuln.get("description"),
+                        "vulnerable_range": vuln["range"],
                     })
+
         except json.JSONDecodeError as e:
             logging.error(f"Invalid JSON in dependency file: {e}")
-        
+        except Exception as e:
+            logging.error(f"Error scanning JSON dependency file: {e}")
+
         return vulnerabilities
-    
+
     def _scan_yarn_lock(self, content: str, vuln_db: VulnerabilityDatabase) -> List[Dict]:
         """Scan yarn.lock files"""
         vulnerabilities = []
